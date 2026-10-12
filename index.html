@@ -6,7 +6,7 @@
     <title>PCO Quick Lookup</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9f9f9; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h2 { text-align: center; color: #0066cc; }
         .input-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
         input { padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
@@ -18,12 +18,21 @@
         .label { font-weight: 600; color: #555; }
         .error { color: #d9534f; text-align: center; }
         .loading { text-align: center; color: #666; font-style: italic; }
+        .cred-box { background: #fff3cd; padding: 12px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #ffeeba; }
+        .household-list { margin-top: 8px; padding-left: 15px; font-size: 13px; color: #444; }
     </style>
 </head>
 <body>
 
     <div class="container">
         <h2>PCO Quick Lookup</h2>
+        
+        <div class="cred-box">
+            <div style="font-size: 13px; font-weight: bold; margin-bottom: 5px; color: #856404;">PCO Credentials (Saved by browser keychain/autofill):</div>
+            <input type="text" id="pcoAppId" placeholder="App ID (Public Key)" autocomplete="username" style="margin-bottom: 8px;">
+            <input type="password" id="pcoSecret" placeholder="Secret (Private Key)" autocomplete="current-password">
+        </div>
+
         <div class="input-group">
             <input type="text" id="firstName" placeholder="Partial First Name">
             <input type="text" id="lastName" placeholder="Partial Last Name">
@@ -34,15 +43,17 @@
     </div>
 
     <script>
-        // NOTE: Replace these with your Planning Center Personal Access Token credentials
-        const APP_ID = "dad3a87dedda14acfd2d344aabba4238c7c0ab194a7da99925eb146420f1b77d";
-        const SECRET = "pco_pat_192cc08ef7c7cb5b5680b2e9f55b8821f57a073c636a7b0132bb90f79d3fd90de12ba5cb";
-
         async function searchPeople() {
+            const appId = document.getElementById('pcoAppId').value.trim();
+            const secret = document.getElementById('pcoSecret').value.trim();
             const firstName = document.getElementById('firstName').value.trim();
             const lastName = document.getElementById('lastName').value.trim();
             const resultsDiv = document.getElementById('results');
             
+            if (!appId || !secret) {
+                resultsDiv.innerHTML = "<p class='error'>Please enter your Planning Center App ID and Secret.</p>";
+                return;
+            }
             if (!firstName && !lastName) {
                 resultsDiv.innerHTML = "<p class='error'>Please enter at least a partial first or last name.</p>";
                 return;
@@ -50,9 +61,10 @@
 
             resultsDiv.innerHTML = "<p class='loading'>Searching Planning Center...</p>";
 
-            const credentials = btoa(`${APP_ID}:${SECRET}`);
-            let url = `https://api.planningcenteronline.com/people/v2/people?include=households`;
+            const credentials = btoa(`${appId}:${secret}`);
             
+            // Include households and field data to catch custom tab info and family ties
+            let url = `https://api.planningcenteronline.com/people/v2/people?include=households,field_data.field_definition`;
             if (firstName) url += `&where[first_name][contains]=${encodeURIComponent(firstName)}`;
             if (lastName) url += `&where[last_name][contains]=${encodeURIComponent(lastName)}`;
 
@@ -63,7 +75,7 @@
                     }
                 });
 
-                if (!response.ok) throw new Error('API request failed. Check credentials or network.');
+                if (!response.ok) throw new Error('API request failed. Check your App ID and Secret.');
 
                 const data = await response.json();
                 displayResults(data);
@@ -79,15 +91,67 @@
                 return;
             }
 
+            // Build a lookup dictionary for included resources (like households and custom field definitions)
+            const includedMap = {};
+            if (data.included) {
+                data.included.forEach(item => {
+                    includedMap[`${item.type}-${item.id}`] = item;
+                });
+            }
+
             let html = `<h3>Found ${data.data.length} match(es):</h3>`;
+            
             data.data.forEach(person => {
                 const attr = person.attributes;
+                const fullName = attr.name || `${attr.first_name} ${attr.last_name}`;
+                
+                // Extract Custom Field Data (Deacon & Joined Date from Membership Info tab)
+                let deacon = 'None';
+                let joinedDate = 'None';
+
+                if (person.relationships && person.relationships.field_data && person.relationships.field_data.data) {
+                    person.relationships.field_data.data.forEach(fdRef => {
+                        const fdItem = includedMap[`${fdRef.type}-${fdRef.id}`];
+                        if (fdItem && fdItem.attributes) {
+                            const val = fdItem.attributes.value;
+                            // Check the linked field definition to match field names
+                            if (fdItem.relationships && fdItem.relationships.field_definition) {
+                                const defRef = fdItem.relationships.field_definition.data;
+                                const defItem = includedMap[`${defRef.type}-${defRef.id}`];
+                                if (defItem && defItem.attributes) {
+                                    const fieldName = defItem.attributes.name.toLowerCase();
+                                    if (fieldName.includes('deacon')) {
+                                        deacon = val;
+                                    } else if (fieldName.includes('joined') || fieldName.includes('join date')) {
+                                        joinedDate = val;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Extract Household / Family Members
+                let householdHtml = '';
+                if (person.relationships && person.relationships.households && person.relationships.households.data) {
+                    const householdRefs = person.relationships.households.data;
+                    householdRefs.forEach(hRef => {
+                        const hItem = includedMap[`${hRef.type}-${hRef.id}`];
+                        if (hItem && hItem.attributes) {
+                            householdHtml += `<div class="detail-row"><span class="label">Household:</span> ${hItem.attributes.name || 'Family'}</div>`;
+                        }
+                    });
+                }
+
                 html += `
                     <div class="result-card">
-                        <h3>${attr.name || (attr.first_name + ' ' + attr.last_name)}</h3>
+                        <h3>${fullName}</h3>
                         <div class="detail-row"><span class="label">Email:</span> ${attr.primary_email || 'None'}</div>
                         <div class="detail-row"><span class="label">Phone:</span> ${attr.primary_phone || 'None'}</div>
                         <div class="detail-row"><span class="label">Membership:</span> ${attr.membership || 'N/A'}</div>
+                        <div class="detail-row"><span class="label">Joined Date:</span> ${joinedDate}</div>
+                        <div class="detail-row"><span class="label">Deacon:</span> ${deacon}</div>
+                        ${householdHtml}
                     </div>
                 `;
             });
