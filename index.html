@@ -19,7 +19,6 @@
         .error { color: #d9534f; text-align: center; }
         .loading { text-align: center; color: #666; font-style: italic; }
         .cred-box { background: #fff3cd; padding: 12px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #ffeeba; }
-        .household-list { margin-top: 8px; padding-left: 15px; font-size: 13px; color: #444; }
     </style>
 </head>
 <body>
@@ -29,8 +28,8 @@
         
         <div class="cred-box">
             <div style="font-size: 13px; font-weight: bold; margin-bottom: 5px; color: #856404;">PCO Credentials (Saved by browser keychain/autofill):</div>
-            <input type="text" id="pcoAppId" placeholder="App ID (Public Key)" autocomplete="username" style="margin-bottom: 8px;">
-            <input type="password" id="pcoSecret" placeholder="Secret (Private Key)" autocomplete="current-password">
+            <input type="text" id="pcoAppId" placeholder="App ID (Public Key)" autocomplete="username" style="margin-bottom: 8px; width: 100%; box-sizing: border-box;">
+            <input type="password" id="pcoSecret" placeholder="Secret (Private Key)" autocomplete="current-password" style="width: 100%; box-sizing: border-box;">
         </div>
 
         <div class="input-group">
@@ -63,19 +62,21 @@
 
             const credentials = btoa(`${appId}:${secret}`);
             
-            // Include households and field data to catch custom tab info and family ties
-            let url = `https://api.planningcenteronline.com/people/v2/people?include=households,field_data.field_definition`;
-            if (firstName) url += `&where[first_name][contains]=${encodeURIComponent(firstName)}`;
-            if (lastName) url += `&where[last_name][contains]=${encodeURIComponent(lastName)}`;
+            let pcoUrl = `https://api.planningcenteronline.com/people/v2/people?include=households,field_data.field_definition`;
+            if (firstName) pcoUrl += `&where[first_name][contains]=${encodeURIComponent(firstName)}`;
+            if (lastName) pcoUrl += `&where[last_name][contains]=${encodeURIComponent(lastName)}`;
+
+            // Route through a CORS proxy to bypass browser restrictions
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(pcoUrl)}`;
 
             try {
-                const response = await fetch(url, {
+                const response = await fetch(proxyUrl, {
                     headers: {
                         'Authorization': `Basic ${credentials}`
                     }
                 });
 
-                if (!response.ok) throw new Error('API request failed. Check your App ID and Secret.');
+                if (!response.ok) throw new Error(`API request failed with status ${response.status}. Check your App ID and Secret.`);
 
                 const data = await response.json();
                 displayResults(data);
@@ -91,7 +92,6 @@
                 return;
             }
 
-            // Build a lookup dictionary for included resources (like households and custom field definitions)
             const includedMap = {};
             if (data.included) {
                 data.included.forEach(item => {
@@ -105,7 +105,6 @@
                 const attr = person.attributes;
                 const fullName = attr.name || `${attr.first_name} ${attr.last_name}`;
                 
-                // Extract Custom Field Data (Deacon & Joined Date from Membership Info tab)
                 let deacon = 'None';
                 let joinedDate = 'None';
 
@@ -114,7 +113,6 @@
                         const fdItem = includedMap[`${fdRef.type}-${fdRef.id}`];
                         if (fdItem && fdItem.attributes) {
                             const val = fdItem.attributes.value;
-                            // Check the linked field definition to match field names
                             if (fdItem.relationships && fdItem.relationships.field_definition) {
                                 const defRef = fdItem.relationships.field_definition.data;
                                 const defItem = includedMap[`${defRef.type}-${defRef.id}`];
@@ -131,11 +129,9 @@
                     });
                 }
 
-                // Extract Household / Family Members
                 let householdHtml = '';
                 if (person.relationships && person.relationships.households && person.relationships.households.data) {
-                    const householdRefs = person.relationships.households.data;
-                    householdRefs.forEach(hRef => {
+                    person.relationships.households.data.forEach(hRef => {
                         const hItem = includedMap[`${hRef.type}-${hRef.id}`];
                         if (hItem && hItem.attributes) {
                             householdHtml += `<div class="detail-row"><span class="label">Household:</span> ${hItem.attributes.name || 'Family'}</div>`;
@@ -143,13 +139,16 @@
                     });
                 }
 
+    // Format dates nicely if they exist
+    const formattedJoined = joinedDate !== 'None' ? new Date(joinedDate).toLocaleDateString() : 'None';
+
                 html += `
                     <div class="result-card">
                         <h3>${fullName}</h3>
                         <div class="detail-row"><span class="label">Email:</span> ${attr.primary_email || 'None'}</div>
                         <div class="detail-row"><span class="label">Phone:</span> ${attr.primary_phone || 'None'}</div>
                         <div class="detail-row"><span class="label">Membership:</span> ${attr.membership || 'N/A'}</div>
-                        <div class="detail-row"><span class="label">Joined Date:</span> ${joinedDate}</div>
+                        <div class="detail-row"><span class="label">Joined Date:</span> ${formattedJoined}</div>
                         <div class="detail-row"><span class="label">Deacon:</span> ${deacon}</div>
                         ${householdHtml}
                     </div>
