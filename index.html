@@ -66,13 +66,13 @@
             if (firstName) pcoUrl += `&where[first_name][contains]=${encodeURIComponent(firstName)}`;
             if (lastName) pcoUrl += `&where[last_name][contains]=${encodeURIComponent(lastName)}`;
 
-            // Route through a CORS proxy to bypass browser restrictions
             const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(pcoUrl)}`;
 
             try {
                 const response = await fetch(proxyUrl, {
                     headers: {
-                        'Authorization': `Basic ${credentials}`
+                        'Authorization': `Basic ${credentials}`,
+                        'User-Agent': 'PCO-Quick-Lookup-Tool (Personal Tool)'
                     }
                 });
 
@@ -139,8 +139,7 @@
                     });
                 }
 
-    // Format dates nicely if they exist
-    const formattedJoined = joinedDate !== 'None' ? new Date(joinedDate).toLocaleDateString() : 'None';
+                const formattedJoined = joinedDate !== 'None' ? new Date(joinedDate).toLocaleDateString() : 'None';
 
                 html += `
                     <div class="result-card">
